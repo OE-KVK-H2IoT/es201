@@ -58,8 +58,12 @@ int gt911_product_id(uint8_t out[4])     { return rd(REG_PID, out, 4); }
 
 int gt911_read(gt911_point_t *pts, int max) {
     uint8_t st;
-    if (rd(REG_STATUS, &st, 1) < 0) return 0;
-    if (!(st & 0x80)) return 0;            // no fresh data
+    if (rd(REG_STATUS, &st, 1) < 0) return -1;
+    // The ready bit (0x80) is set only when a NEW sample exists. If it's clear
+    // there is simply no fresh data this poll — that is NOT "finger lifted", so
+    // return -1 and let the caller keep the finger state unchanged. A genuine
+    // lift arrives as a fresh sample (ready bit set) whose count is 0.
+    if (!(st & 0x80)) return -1;
     int n = st & 0x0F;
     if (n > max) n = max;
     for (int i = 0; i < n; i++) {

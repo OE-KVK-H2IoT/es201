@@ -93,8 +93,14 @@ int main(void) {
         }
         clr_last = clr; inv_last = inv;
 
-        // --- touch: gt911_read returns >0 ONLY when a fresh sample is ready ---
-        int n = gt911_read(pts, 5);    // n = fingers down in this snapshot (0..5)
+        // --- touch ---
+        // gt911_read returns -1 when there's no NEW sample yet (we poll far
+        // faster than the controller reports). Crucial: skip those polls and
+        // leave finger state alone — treating "no new data" as "finger up" is
+        // what chops a smooth drag into single dots. Only a fresh sample (>=0)
+        // updates who is down; a fresh sample with 0 fingers means a real lift.
+        int n = gt911_read(pts, 5);
+        if (n < 0) { sleep_ms(1); continue; }
         uint16_t seen = 0;
         for (int i = 0; i < n; i++) {
             int id = pts[i].id & (MAX_ID - 1);

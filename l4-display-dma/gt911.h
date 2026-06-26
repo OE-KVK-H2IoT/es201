@@ -11,7 +11,11 @@ typedef struct {
 // Reset + bring up the controller. Returns 1 if it answers on I2C, else 0.
 int gt911_init(void);
 
-// Read currently-touched points into pts[0..max-1]; returns the count (0..max).
+// Read currently-touched points into pts[0..max-1].
+//   returns  0..max  = a FRESH sample with this many fingers (0 = just lifted)
+//   returns  -1       = no fresh sample this read (controller hasn't updated yet)
+// Most polls return -1 because you poll far faster than the controller reports;
+// treat -1 as "nothing new", NOT as "finger up", or strokes break into dots.
 int gt911_read(gt911_point_t *pts, int max);
 
 // --- low-level primitives (used for diagnostics / calibration) ---
