@@ -1,21 +1,25 @@
 // L4 (touch) — GT911 touch paint that NARRATES what it does, for learning.
 // ===========================================================================
 // HOW A CAPACITIVE TOUCHSCREEN GIVES YOU DATA
-//   The GT911 is an I2C chip that scans its glass and, each time you ask, hands
-//   back a SNAPSHOT: "these 0..5 fingers are down right now, at these (x,y)."
-//   It refreshes that snapshot at its own fixed rate (a new sample every few
-//   ms) — you cannot get points any faster than the hardware produces them.
+//   The GT911 is an I2C chip. Each time you ask, it hands back a SNAPSHOT:
+//   "these 0..5 fingers are down right now, at these (x,y)", each tagged with a
+//   track id so you can follow a finger across samples. It refreshes that
+//   snapshot at its own fixed rate — you cannot get points any faster.
 //
-//   So motion arrives as DISCRETE SAMPLES, not a continuous line:
-//     * first time we see a finger  -> we only have a point        -> draw a DOT
-//     * next samples of that finger -> we have "from" and "to"      -> draw a LINE
-//   The line between two samples is interpolation: we didn't see the path the
-//   finger took, so we assume a straight one. A SLOW finger gives tiny gaps
-//   (looks continuous either way); a FAST finger gives big gaps (dots without
-//   the line). The console below prints each event so you can SEE this happen:
-//   every move line shows the pixel gap since the last sample — flick fast and
-//   watch it jump. The number of move lines per second IS the controller's
-//   report rate.
+//   Everything the program does is built from that point stream:
+//     * DOWN: first sample of a finger              -> a point, so draw a DOT
+//     * move: later samples of the same finger      -> a path, so draw a LINE
+//             (interpolate, so a fast finger isn't a dotted line)
+//     * UP:   finger gone -> classify the whole stroke as TAP (stayed put) or
+//             DRAG (moved), purely from how far it travelled
+//     * two fingers at once -> draw a straight LINE between them (a ruler):
+//             anchor with one finger, touch the far end with the other
+//
+//   GOTCHAS this code handles, both worth understanding:
+//     * "no new data" is NOT "finger up" — gt911_read returns -1 when the
+//       controller has nothing fresh (we poll far faster than it reports).
+//     * track ids can be REASSIGNED when a finger lands/lifts, so a finger can
+//       appear to teleport; we reject impossible one-sample jumps.
 //
 //   K1 clears the canvas; K2 inverts the colours.
 // ===========================================================================
@@ -29,17 +33,17 @@
 #define BTN_CLEAR  14   // K1 (active-low)
 #define BTN_INVERT 15   // K2 (active-low)
 #define MAX_ID     16
+#define TAP_MOVE   8    // stroke moved <= this many px -> TAP, else DRAG
+#define MAX_JUMP   80   // one-sample move bigger than this = a track-id shuffle, not motion
 
 static void button_init(uint pin) {
     gpio_init(pin); gpio_set_dir(pin, GPIO_IN); gpio_pull_up(pin);
 }
+static int clampi(int v, int hi) { return v < 0 ? 0 : (v >= hi ? hi - 1 : v); }
 
 static void draw_dot(int x, int y, uint16_t color) {
-    int x0 = x - DOT, y0 = y - DOT, x1 = x + DOT, y1 = y + DOT;
-    if (x0 < 0) x0 = 0;
-    if (y0 < 0) y0 = 0;
-    if (x1 >= ST7796_WIDTH)  x1 = ST7796_WIDTH  - 1;
-    if (y1 >= ST7796_HEIGHT) y1 = ST7796_HEIGHT - 1;
+    int x0 = clampi(x - DOT, ST7796_WIDTH),  y0 = clampi(y - DOT, ST7796_HEIGHT);
+    int x1 = clampi(x + DOT, ST7796_WIDTH),  y1 = clampi(y + DOT, ST7796_HEIGHT);
     st7796_fill_rect(x0, y0, x1 - x0 + 1, y1 - y0 + 1, color);
 }
 
@@ -57,10 +61,9 @@ int main(void) {
     sleep_ms(2000);
 
     printf("\n=== L4 Touch Paint (narrated) ===\n");
-    printf("The GT911 gives discrete (x,y) samples at its own report rate.\n");
-    printf("DOWN  = first contact  -> we draw a single DOT.\n");
-    printf("move  = next samples   -> we draw a LINE across the pixel gap.\n");
-    printf("Big gap = fast finger. Flick fast and watch the gap number jump.\n\n");
+    printf("ONE finger: drag = freehand line, tap = a dot (TAP/DRAG reported on lift).\n");
+    printf("TWO fingers: a straight LINE is drawn between them (anchor + touch).\n");
+    printf("K1 clears, K2 inverts.\n\n");
 
     st7796_init();
     button_init(BTN_CLEAR);
@@ -71,10 +74,11 @@ int main(void) {
     if (!gt911_init()) { printf("!! GT911 not found on I2C0\n"); st7796_fill_screen(ST_RED); }
     else                 printf("GT911 ready — touch the screen\n\n");
 
-    // Per-finger memory: last point + how many samples this stroke has lasted.
-    struct { bool active; int x, y; int count; } last[MAX_ID] = {0};
+    // Per-finger memory for freehand: last point, stroke start + farthest move
+    // (tap vs drag), and sample count.
+    struct { bool active; int x, y, sx, sy, maxmove, count; } last[MAX_ID] = {0};
     gt911_point_t pts[5];
-    bool clr_last = false, inv_last = false;
+    bool clr_last = false, inv_last = false, was_two = false;
 
     while (true) {
         // --- buttons ---
@@ -83,56 +87,75 @@ int main(void) {
         if (clr && !clr_last) {
             st7796_fill_screen(bg);
             for (int j = 0; j < MAX_ID; j++) last[j].active = false;
-            printf("[K1] clear — canvas wiped, all strokes reset\n");
+            printf("[K1] clear\n");
         }
         if (inv && !inv_last) {
             uint16_t t = fg; fg = bg; bg = t;
             st7796_fill_screen(bg);
             for (int j = 0; j < MAX_ID; j++) last[j].active = false;
-            printf("[K2] invert — draw=0x%04X background=0x%04X\n", fg, bg);
+            printf("[K2] invert (draw=0x%04X bg=0x%04X)\n", fg, bg);
         }
         clr_last = clr; inv_last = inv;
 
         // --- touch ---
-        // gt911_read returns -1 when there's no NEW sample yet (we poll far
-        // faster than the controller reports). Crucial: skip those polls and
-        // leave finger state alone — treating "no new data" as "finger up" is
-        // what chops a smooth drag into single dots. Only a fresh sample (>=0)
-        // updates who is down; a fresh sample with 0 fingers means a real lift.
-        int n = gt911_read(pts, 5);
+        int n = gt911_read(pts, 5);     // -1 = no fresh sample; 0..5 = fingers down
         if (n < 0) { sleep_ms(1); continue; }
+
+        if (n >= 2) {
+            // ===== TWO-FINGER LINE TOOL =====
+            // Draw one clean line the instant the second finger lands; ignore
+            // further holding so it doesn't smear. We just take the two reported
+            // points, so track-id shuffling can't hurt us here.
+            if (!was_two) {
+                int ax = clampi(pts[0].x, ST7796_WIDTH), ay = clampi(pts[0].y, ST7796_HEIGHT);
+                int bx = clampi(pts[1].x, ST7796_WIDTH), by = clampi(pts[1].y, ST7796_HEIGHT);
+                printf("TWO fingers -> straight LINE (%d,%d)->(%d,%d)\n", ax, ay, bx, by);
+                draw_line(ax, ay, bx, by, fg);
+            }
+            was_two = true;
+            for (int id = 0; id < MAX_ID; id++) last[id].active = false;  // reset freehand
+            sleep_ms(1);
+            continue;
+        }
+        was_two = false;
+
+        // ===== ONE-FINGER FREEHAND (n == 0 or 1) =====
         uint16_t seen = 0;
         for (int i = 0; i < n; i++) {
             int id = pts[i].id & (MAX_ID - 1);
-            int x = pts[i].x, y = pts[i].y;
-            if (x >= ST7796_WIDTH)  x = ST7796_WIDTH  - 1;
-            if (y >= ST7796_HEIGHT) y = ST7796_HEIGHT - 1;
+            int x = clampi(pts[i].x, ST7796_WIDTH), y = clampi(pts[i].y, ST7796_HEIGHT);
 
             if (!last[id].active) {
-                // First time we see this finger: we have a point, not a path.
-                printf("finger %d DOWN at (%3d,%3d) -> first contact, drawing a DOT\n", id, x, y);
+                printf("finger %d DOWN at (%3d,%3d) -> drawing a DOT\n", id, x, y);
                 draw_dot(x, y, fg);
-                last[id].count = 1;
+                last[id].sx = x; last[id].sy = y; last[id].maxmove = 0; last[id].count = 1;
             } else {
                 int gap = abs(x - last[id].x) > abs(y - last[id].y)
                         ? abs(x - last[id].x) : abs(y - last[id].y);
-                if (gap > 0) {
-                    // We have "from" and "to": connect them so fast moves don't gap.
-                    printf("finger %d move (%3d,%3d)->(%3d,%3d)  gap=%3dpx -> drawing a LINE (%d steps)\n",
+                if (gap > MAX_JUMP) {
+                    printf("finger %d JUMP %3dpx (track id reassigned?) -> not connecting\n", id, gap);
+                    draw_dot(x, y, fg);
+                    last[id].sx = x; last[id].sy = y; last[id].maxmove = 0;
+                } else if (gap > 0) {
+                    printf("finger %d move (%3d,%3d)->(%3d,%3d)  gap=%3dpx -> LINE (%d steps)\n",
                            id, last[id].x, last[id].y, x, y, gap, gap);
                     draw_line(last[id].x, last[id].y, x, y, fg);
                 } else {
-                    draw_dot(x, y, fg);            // finger held still: no narration spam
+                    draw_dot(x, y, fg);
                 }
                 last[id].count++;
             }
             last[id].active = true; last[id].x = x; last[id].y = y;
+            int mdx = abs(x - last[id].sx), mdy = abs(y - last[id].sy);
+            int dist = mdx > mdy ? mdx : mdy;
+            if (dist > last[id].maxmove) last[id].maxmove = dist;
             seen |= (uint16_t)(1u << id);
         }
-        // Fingers we tracked but didn't see this snapshot have lifted.
         for (int id = 0; id < MAX_ID; id++) {
             if (last[id].active && !(seen & (1u << id))) {
-                printf("finger %d UP -> stroke ended after %d samples\n", id, last[id].count);
+                const char *kind = last[id].maxmove <= TAP_MOVE ? "TAP " : "DRAG";
+                printf("finger %d UP -> %s (moved %dpx over %d samples)\n",
+                       id, kind, last[id].maxmove, last[id].count);
                 last[id].active = false;
             }
         }
