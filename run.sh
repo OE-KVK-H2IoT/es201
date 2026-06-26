@@ -14,8 +14,19 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD="$HERE/build"
-SERIAL_DEFAULT="${SERIAL:-/dev/ttyACM0}"
 ADAPTER_SPEED="${ADAPTER_SPEED:-5000}"
+
+# Find the Pico's own USB-CDC port (VID 2e8a / PID 0009) — NOT the Debug Probe's
+# UART bridge (000c) or some unrelated ttyACM (a monitor, modem, ...).
+find_pico_serial() {
+    local d
+    for d in /dev/ttyACM*; do
+        [ -e "$d" ] || continue
+        local p; p="$(udevadm info -q property -n "$d" 2>/dev/null)"
+        echo "$p" | grep -q 'ID_USB_VENDOR_ID=2e8a' && echo "$p" | grep -q 'ID_USB_MODEL_ID=0009' && { echo "$d"; return 0; }
+    done
+    return 1
+}
 OCD_IFACE="interface/cmsis-dap.cfg"
 OCD_TARGET="target/rp2350.cfg"
 
@@ -61,7 +72,9 @@ flash_target() {
 }
 
 monitor() {
-    local dev="${1:-$SERIAL_DEFAULT}"
+    local dev="${1:-${SERIAL:-}}"
+    [ -z "$dev" ] && dev="$(find_pico_serial || true)"
+    [ -z "$dev" ] && { echo "!! no Pico USB-CDC port found — is the Pico's own USB plugged into the PC?"; exit 1; }
     echo ">> serial monitor on $dev"
     if   command -v tio     >/dev/null; then exec tio "$dev"
     elif command -v picocom >/dev/null; then exec picocom -b 115200 "$dev"
