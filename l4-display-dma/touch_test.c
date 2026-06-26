@@ -1,25 +1,25 @@
-// L4 (touch) — GT911 touch paint that NARRATES what it does, for learning.
+// L4 (touch) — GT911 multi-finger touch paint that NARRATES what it does.
 // ===========================================================================
 // HOW A CAPACITIVE TOUCHSCREEN GIVES YOU DATA
-//   The GT911 is an I2C chip. Each time you ask, it hands back a SNAPSHOT:
-//   "these 0..5 fingers are down right now, at these (x,y)", each tagged with a
-//   track id so you can follow a finger across samples. It refreshes that
-//   snapshot at its own fixed rate — you cannot get points any faster.
+//   The GT911 is an I2C chip. Each time you ask, it returns a SNAPSHOT:
+//   "these 0..5 fingers are down right now, at these (x,y)", and crucially each
+//   point carries a TRACK ID so you can follow one finger across samples. It
+//   refreshes that snapshot at its own fixed rate — you can't poll faster.
 //
-//   Everything the program does is built from that point stream:
-//     * DOWN: first sample of a finger              -> a point, so draw a DOT
-//     * move: later samples of the same finger      -> a path, so draw a LINE
+//   This demo paints with ALL fingers at once. The track id is the key idea:
+//   we keep a separate "last point" per id, so finger 0 and finger 1 each draw
+//   their own independent stroke — that is exactly how you use multi-touch data.
+//   Per finger:
+//     * DOWN: first sample of that id      -> a point, so draw a DOT
+//     * move: later samples of that id      -> a path, so draw a LINE
 //             (interpolate, so a fast finger isn't a dotted line)
-//     * UP:   finger gone -> classify the whole stroke as TAP (stayed put) or
-//             DRAG (moved), purely from how far it travelled
-//     * two fingers at once -> draw a straight LINE between them (a ruler):
-//             anchor with one finger, touch the far end with the other
+//     * UP:   id gone -> classify the stroke as TAP (stayed put) or DRAG (moved)
 //
-//   GOTCHAS this code handles, both worth understanding:
+//   Two gotchas the code handles, both worth understanding:
 //     * "no new data" is NOT "finger up" — gt911_read returns -1 when the
 //       controller has nothing fresh (we poll far faster than it reports).
 //     * track ids can be REASSIGNED when a finger lands/lifts, so a finger can
-//       appear to teleport; we reject impossible one-sample jumps.
+//       appear to teleport; we reject impossible one-sample jumps per id.
 //
 //   K1 clears the canvas; K2 inverts the colours.
 // ===========================================================================
@@ -60,10 +60,9 @@ int main(void) {
     setvbuf(stdout, NULL, _IONBF, 0);
     sleep_ms(2000);
 
-    printf("\n=== L4 Touch Paint (narrated) ===\n");
-    printf("ONE finger: drag = freehand line, tap = a dot (TAP/DRAG reported on lift).\n");
-    printf("TWO fingers: a straight LINE is drawn between them (anchor + touch).\n");
-    printf("K1 clears, K2 inverts.\n\n");
+    printf("\n=== L4 Multi-Finger Touch Paint (narrated) ===\n");
+    printf("Up to 5 fingers draw at once; each is tracked by its id.\n");
+    printf("DOWN=dot, move=interpolated line, UP=TAP or DRAG. K1 clears, K2 inverts.\n\n");
 
     st7796_init();
     button_init(BTN_CLEAR);
@@ -74,11 +73,11 @@ int main(void) {
     if (!gt911_init()) { printf("!! GT911 not found on I2C0\n"); st7796_fill_screen(ST_RED); }
     else                 printf("GT911 ready — touch the screen\n\n");
 
-    // Per-finger memory for freehand: last point, stroke start + farthest move
-    // (tap vs drag), and sample count.
+    // One slot per track id: last point, stroke start + farthest move (tap vs
+    // drag), and sample count. This is what makes each finger independent.
     struct { bool active; int x, y, sx, sy, maxmove, count; } last[MAX_ID] = {0};
     gt911_point_t pts[5];
-    bool clr_last = false, inv_last = false, was_two = false;
+    bool clr_last = false, inv_last = false;
 
     while (true) {
         // --- buttons ---
@@ -97,32 +96,13 @@ int main(void) {
         }
         clr_last = clr; inv_last = inv;
 
-        // --- touch ---
-        int n = gt911_read(pts, 5);     // -1 = no fresh sample; 0..5 = fingers down
+        // --- touch: a fresh snapshot of up to 5 fingers (or -1 = nothing new) ---
+        int n = gt911_read(pts, 5);
         if (n < 0) { sleep_ms(1); continue; }
 
-        if (n >= 2) {
-            // ===== TWO-FINGER LINE TOOL =====
-            // Draw one clean line the instant the second finger lands; ignore
-            // further holding so it doesn't smear. We just take the two reported
-            // points, so track-id shuffling can't hurt us here.
-            if (!was_two) {
-                int ax = clampi(pts[0].x, ST7796_WIDTH), ay = clampi(pts[0].y, ST7796_HEIGHT);
-                int bx = clampi(pts[1].x, ST7796_WIDTH), by = clampi(pts[1].y, ST7796_HEIGHT);
-                printf("TWO fingers -> straight LINE (%d,%d)->(%d,%d)\n", ax, ay, bx, by);
-                draw_line(ax, ay, bx, by, fg);
-            }
-            was_two = true;
-            for (int id = 0; id < MAX_ID; id++) last[id].active = false;  // reset freehand
-            sleep_ms(1);
-            continue;
-        }
-        was_two = false;
-
-        // ===== ONE-FINGER FREEHAND (n == 0 or 1) =====
-        uint16_t seen = 0;
+        uint16_t seen = 0;                          // which ids appear this snapshot
         for (int i = 0; i < n; i++) {
-            int id = pts[i].id & (MAX_ID - 1);
+            int id = pts[i].id & (MAX_ID - 1);       // track id -> this finger's slot
             int x = clampi(pts[i].x, ST7796_WIDTH), y = clampi(pts[i].y, ST7796_HEIGHT);
 
             if (!last[id].active) {
@@ -133,6 +113,9 @@ int main(void) {
                 int gap = abs(x - last[id].x) > abs(y - last[id].y)
                         ? abs(x - last[id].x) : abs(y - last[id].y);
                 if (gap > MAX_JUMP) {
+                    // A finger can't teleport between two samples: this is the
+                    // controller handing this id to a different finger. Don't draw
+                    // a line across the screen — start a fresh segment here.
                     printf("finger %d JUMP %3dpx (track id reassigned?) -> not connecting\n", id, gap);
                     draw_dot(x, y, fg);
                     last[id].sx = x; last[id].sy = y; last[id].maxmove = 0;
@@ -141,7 +124,7 @@ int main(void) {
                            id, last[id].x, last[id].y, x, y, gap, gap);
                     draw_line(last[id].x, last[id].y, x, y, fg);
                 } else {
-                    draw_dot(x, y, fg);
+                    draw_dot(x, y, fg);              // finger held still
                 }
                 last[id].count++;
             }
@@ -151,6 +134,7 @@ int main(void) {
             if (dist > last[id].maxmove) last[id].maxmove = dist;
             seen |= (uint16_t)(1u << id);
         }
+        // Any id we were tracking but didn't see this snapshot has lifted.
         for (int id = 0; id < MAX_ID; id++) {
             if (last[id].active && !(seen & (1u << id))) {
                 const char *kind = last[id].maxmove <= TAP_MOVE ? "TAP " : "DRAG";
