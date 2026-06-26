@@ -1,3 +1,6 @@
-# L4 — Display and DMA: full ST7796 panel self-test (SPI0 + DMA pixel streaming)
-es201_app(l4_display main.c st7796.c)
+# L4 — Display and DMA
+es201_app(l4_display main.c st7796.c)                    # ST7796 panel self-test
 target_link_libraries(l4_display hardware_spi hardware_dma)
+
+es201_app(l4_touch touch_test.c st7796.c gt911.c)        # GT911 touch test (draws dots)
+target_link_libraries(l4_touch hardware_spi hardware_dma hardware_i2c)
