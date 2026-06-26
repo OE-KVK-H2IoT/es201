@@ -11,7 +11,7 @@
 #define PIN_CS    5
 #define PIN_DC    6
 #define PIN_RST   7
-#define LCD_BAUD  (40 * 1000 * 1000)   // 40 MHz; ST7796 tolerates up to ~62.5 MHz
+#define LCD_BAUD  (62 * 1000 * 1000)   // 62 MHz; ST7796 tolerates up to ~62.5 MHz
 
 #define CHUNK_PX  512                  // pixels streamed per DMA burst
 static uint8_t  chunk[CHUNK_PX * 2];   // big-endian RGB565, refilled on colour change
