@@ -70,14 +70,33 @@ int main(void) {
 
     uint16_t fg = ST_BLUE, bg = ST_WHITE;
     st7796_fill_screen(bg);
-    if (!gt911_init()) { printf("!! GT911 not found on I2C0\n"); st7796_fill_screen(ST_RED); }
-    else                 printf("GT911 ready — touch the screen\n\n");
+    if (!gt911_init()) {
+        printf("!! GT911 not found on I2C0\n");
+        st7796_fill_screen(ST_RED);
+    } else {
+        // Log the hardware facts up front — knowing what you're talking to is
+        // half of understanding the data that follows.
+        uint8_t pid[4] = {0};
+        gt911_product_id(pid);
+        printf("GT911 ready: product '%c%c%c%c', I2C0 @ 0x5D, panel %dx%d\n",
+               pid[0] ? pid[0] : '?', pid[1] ? pid[1] : '?',
+               pid[2] ? pid[2] : '?', pid[3] ? pid[3] : '?',
+               ST7796_WIDTH, ST7796_HEIGHT);
+        printf("Watch the [rate] line: 'report' is how often the controller has\n");
+        printf("new data; 'poll' is how often we ask. poll >> report is the whole point.\n\n");
+    }
 
     // One slot per track id: last point, stroke start + farthest move (tap vs
     // drag), and sample count. This is what makes each finger independent.
     struct { bool active; int x, y, sx, sy, maxmove, count; } last[MAX_ID] = {0};
     gt911_point_t pts[5];
     bool clr_last = false, inv_last = false;
+
+    // Live rate counters: how many times we polled vs how many fresh samples the
+    // controller actually produced, summed over a 1-second window.
+    uint64_t rate_t0 = time_us_64();
+    uint32_t polls = 0, fresh = 0;
+    int      fingers_now = 0;
 
     while (true) {
         // --- buttons ---
@@ -98,6 +117,20 @@ int main(void) {
 
         // --- touch: a fresh snapshot of up to 5 fingers (or -1 = nothing new) ---
         int n = gt911_read(pts, 5);
+
+        // Live telemetry: count every poll, and every poll that returned a fresh
+        // sample, then report both once per second. 'report' Hz is the GT911's
+        // real update rate; 'poll' Hz is ours — seeing poll >> report on screen is
+        // exactly why "no new data" must not be read as "finger up".
+        polls++;
+        if (n >= 0) { fresh++; fingers_now = n; }
+        uint64_t now = time_us_64();
+        if (now - rate_t0 >= 1000000) {
+            printf("[rate] GT911 report=%lu Hz   we poll=%lu Hz   fingers now=%d\n",
+                   (unsigned long)fresh, (unsigned long)polls, fingers_now);
+            rate_t0 = now; polls = 0; fresh = 0;
+        }
+
         if (n < 0) { sleep_ms(1); continue; }
 
         uint16_t seen = 0;                          // which ids appear this snapshot
