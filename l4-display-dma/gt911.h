@@ -13,3 +13,9 @@ int gt911_init(void);
 
 // Read currently-touched points into pts[0..max-1]; returns the count (0..max).
 int gt911_read(gt911_point_t *pts, int max);
+
+// --- low-level primitives (used for diagnostics / calibration) ---
+int  gt911_status(uint8_t *status);          // read 0x814E (bit7=ready, bits0:3=count)
+int  gt911_point_raw(int i, uint8_t out[8]); // raw 8 bytes of touch point i
+void gt911_clear(void);                       // clear the status flag (write 0 to 0x814E)
+int  gt911_product_id(uint8_t out[4]);        // 4-byte product id (should read "911")

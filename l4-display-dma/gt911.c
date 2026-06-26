@@ -51,6 +51,11 @@ int gt911_init(void) {
     return 1;
 }
 
+int gt911_status(uint8_t *status)        { return rd(REG_STATUS, status, 1); }
+int gt911_point_raw(int i, uint8_t o[8]) { return rd(REG_POINT1 + i * 8, o, 8); }
+void gt911_clear(void)                   { wr(REG_STATUS, 0); }
+int gt911_product_id(uint8_t out[4])     { return rd(REG_PID, out, 4); }
+
 int gt911_read(gt911_point_t *pts, int max) {
     uint8_t st;
     if (rd(REG_STATUS, &st, 1) < 0) return 0;
@@ -60,10 +65,12 @@ int gt911_read(gt911_point_t *pts, int max) {
     for (int i = 0; i < n; i++) {
         uint8_t d[8];
         if (rd(REG_POINT1 + i * 8, d, 8) < 0) { n = i; break; }
-        pts[i].id   = d[0];
-        pts[i].x    = (uint16_t)(d[1] | (d[2] << 8));
-        pts[i].y    = (uint16_t)(d[3] | (d[4] << 8));
-        pts[i].size = (uint16_t)(d[5] | (d[6] << 8));
+        // Layout (verified on the EP-0172 panel): X@0:1, Y@2:3, size@4:5 (all
+        // little-endian), track id @7. Range matches the display: 0..319 / 0..479.
+        pts[i].x    = (uint16_t)(d[0] | (d[1] << 8));
+        pts[i].y    = (uint16_t)(d[2] | (d[3] << 8));
+        pts[i].size = (uint16_t)(d[4] | (d[5] << 8));
+        pts[i].id   = d[7];
     }
     wr(REG_STATUS, 0);                     // tell the controller we consumed the buffer
     return n;
