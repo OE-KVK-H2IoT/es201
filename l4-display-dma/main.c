@@ -8,6 +8,7 @@
 
 int main(void) {
     stdio_init_all();
+    setvbuf(stdout, NULL, _IONBF, 0);   // unbuffered: flush every printf immediately
     sleep_ms(2000);                 // let the USB-serial host attach
     printf("L4 ST7796 display self-test\n");
 

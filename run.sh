@@ -16,14 +16,13 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD="$HERE/build"
 ADAPTER_SPEED="${ADAPTER_SPEED:-5000}"
 
-# Find the Pico's own USB-CDC port (VID 2e8a / PID 0009) — NOT the Debug Probe's
-# UART bridge (000c) or some unrelated ttyACM (a monitor, modem, ...).
-find_pico_serial() {
-    local d
+# Find a ttyACM by USB PID: 0009 = Pico's own USB-CDC, 000c = Debug Probe UART bridge.
+find_acm_by_pid() {
+    local pid="$1" d p
     for d in /dev/ttyACM*; do
         [ -e "$d" ] || continue
-        local p; p="$(udevadm info -q property -n "$d" 2>/dev/null)"
-        echo "$p" | grep -q 'ID_USB_VENDOR_ID=2e8a' && echo "$p" | grep -q 'ID_USB_MODEL_ID=0009' && { echo "$d"; return 0; }
+        p="$(udevadm info -q property -n "$d" 2>/dev/null)"
+        echo "$p" | grep -q 'ID_USB_VENDOR_ID=2e8a' && echo "$p" | grep -q "ID_USB_MODEL_ID=$pid" && { echo "$d"; return 0; }
     done
     return 1
 }
@@ -72,9 +71,13 @@ flash_target() {
 }
 
 monitor() {
+    # Programs print to BOTH the Pico USB-CDC and UART0 (GP0/1 -> Debug Probe bridge).
+    # Prefer the probe's UART bridge: it's the reliable path (USB-CDC can be flaky on
+    # some RP2350 setups). Override with: SERIAL=/dev/ttyACMx ./run.sh monitor
     local dev="${1:-${SERIAL:-}}"
-    [ -z "$dev" ] && dev="$(find_pico_serial || true)"
-    [ -z "$dev" ] && { echo "!! no Pico USB-CDC port found — is the Pico's own USB plugged into the PC?"; exit 1; }
+    [ -z "$dev" ] && dev="$(find_acm_by_pid 000c || true)"   # Debug Probe UART bridge
+    [ -z "$dev" ] && dev="$(find_acm_by_pid 0009 || true)"   # Pico USB-CDC
+    [ -z "$dev" ] && { echo "!! no Pico/probe serial port found (probe plugged in? UART wired to GP0/GP1?)"; exit 1; }
     echo ">> serial monitor on $dev"
     if   command -v tio     >/dev/null; then exec tio "$dev"
     elif command -v picocom >/dev/null; then exec picocom -b 115200 "$dev"

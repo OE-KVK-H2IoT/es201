@@ -34,6 +34,11 @@ Each demo produces a `.uf2` (drag-and-drop flashing) and `.elf` (SWD/debugger) u
 auto-finds the Pi-fork OpenOCD scripts under `~/.pico-sdk` if `OPENOCD_SCRIPTS`
 isn't set. Remember the Pico needs its **own USB power** in addition to the probe.
 
+**Serial:** programs print to *both* the Pico's USB-CDC **and** UART0 (GP0/GP1 →
+the Debug Probe's UART bridge). `run.sh monitor` prefers the **probe UART bridge**
+because USB-CDC can be flaky on some RP2350 setups. The probe's UART pins must be
+wired to the Pico's GP0/GP1. Override the port with `SERIAL=/dev/ttyACMx ./run.sh monitor`.
+
 Manual SWD flash (equivalent, for debugging):
 ```bash
 openocd -f interface/cmsis-dap.cfg -f target/rp2350.cfg -c "adapter speed 5000"

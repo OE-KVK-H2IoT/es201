@@ -27,8 +27,8 @@ pico_sdk_init()
 function(es201_app name)
     add_executable(${name} ${ARGN})
     target_link_libraries(${name} pico_stdlib)
-    pico_enable_stdio_usb(${name} 1)    # printf over USB-CDC
-    pico_enable_stdio_uart(${name} 0)
+    pico_enable_stdio_usb(${name} 1)    # printf over USB-CDC (Pico's own USB)
+    pico_enable_stdio_uart(${name} 1)   # AND over UART0 GP0/GP1 -> Debug Probe bridge
     pico_add_extra_outputs(${name})     # .uf2 / .hex / .map / .dis
 endfunction()
 
