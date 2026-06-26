@@ -1,21 +1,31 @@
 # L4 — Display and DMA
 
-Demo target: drive the carrier's 3.5" 320×480 TFT (ST7796 over SPI) and move a
-framebuffer to it with DMA, measuring throughput.
+Full self-test for the 52Pi EP-0172's 3.5" 320×480 **ST7796** SPI panel, with DMA
+pixel streaming.
 
-## What builds today
+## What it does
 
-`l4_spi_dma` (`main.c`) — a **compiling SPI + DMA throughput demo**. It sets up a
-DMA channel paced by the SPI TX DREQ, bursts a buffer out, and prints the
-transfer time + Mbit/s as CSV. This exercises the real L4 *mechanism* (background
-data movement, CPU free during transfer) and is measurable with a logic analyzer.
+`l4_display` (`main.c` + `st7796.c`) drives the real panel and loops a visual
+test pattern, narrating over USB-serial:
 
-## Still TODO before it drives the real panel
+1. **Solid-colour cycle** (red/green/blue/white/black) — each full-screen fill is
+   DMA-streamed and its **throughput is printed** (MB/s), the "DMA" half of the lab.
+2. **Eight colour bars** — confirms addressing across the width.
+3. **Vertical gradient** — many small fills, red→blue down the screen.
 
-1. **Confirmed wiring.** The EP-0172 TFT pins (SPI SCK/MOSI/CS/DC/RST + the I²C
-   touch controller) are **not yet confirmed** — `PIN_SCK`/`PIN_MOSI` in `main.c`
-   are placeholders. Verify against the 52Pi EP-0172 wiki.
-2. **An ST7796 driver.** Add the init sequence + command/data (DC pin) handling,
-   then push a real framebuffer instead of the test pattern.
+If the panel stays dark, nothing draws, or colours look wrong, that's your
+debugging exercise — check the pins, reset timing, and the MADCTL/BGR note.
 
-Build it: `./run.sh flash l4_spi_dma` (from `src/es201/`).
+## Pins (confirmed — 52Pi EP-0172 wiki)
+
+| Signal | GPIO | | Signal | GPIO |
+|---|---|---|---|---|
+| SCK  | GP2 (SPI0) | | DC  | GP6 |
+| MOSI | GP3 (SPI0) | | RST | GP7 |
+| CS   | GP5 | | Backlight | hardwired on |
+
+> Red/blue swapped? The panel is initialised BGR (`MADCTL 0x48`); flip the BGR bit
+> to `0x40` in `st7796_init()`. The GT911 capacitive touch (I²C0, GP8/GP9) is not
+> used here — add it as an extension.
+
+Build & flash: `./run.sh flash l4_display` (from `src/es201/`).

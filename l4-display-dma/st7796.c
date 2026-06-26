@@ -1,0 +1,111 @@
+// ST7796 driver: SPI0 for the bus, a dedicated DMA channel to stream pixels so
+// the CPU is free during fills (this is the "DMA" half of the L4 lab).
+#include "st7796.h"
+#include "pico/stdlib.h"
+#include "hardware/spi.h"
+#include "hardware/dma.h"
+
+#define LCD_SPI   spi0
+#define PIN_SCK   2
+#define PIN_MOSI  3
+#define PIN_CS    5
+#define PIN_DC    6
+#define PIN_RST   7
+#define LCD_BAUD  (40 * 1000 * 1000)   // 40 MHz; ST7796 tolerates up to ~62.5 MHz
+
+#define CHUNK_PX  512                  // pixels streamed per DMA burst
+static uint8_t  chunk[CHUNK_PX * 2];   // big-endian RGB565, refilled on colour change
+static int      dma_chan;
+
+static void wait_spi(void) { while (spi_is_busy(LCD_SPI)) tight_loop_contents(); }
+
+// Send one command byte (DC low), then leave DC high for the data that follows.
+static void cmd(uint8_t c) {
+    wait_spi();
+    gpio_put(PIN_DC, 0);
+    spi_write_blocking(LCD_SPI, &c, 1);
+    wait_spi();
+    gpio_put(PIN_DC, 1);
+}
+static void dat(const uint8_t *d, size_t n) { spi_write_blocking(LCD_SPI, d, n); }
+static void dat1(uint8_t d) { spi_write_blocking(LCD_SPI, &d, 1); }
+
+static void set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
+    cmd(0x2A);
+    uint8_t cax[4] = { x0 >> 8, x0 & 0xFF, x1 >> 8, x1 & 0xFF }; dat(cax, 4);
+    cmd(0x2B);
+    uint8_t ray[4] = { y0 >> 8, y0 & 0xFF, y1 >> 8, y1 & 0xFF }; dat(ray, 4);
+    cmd(0x2C);   // RAM write; pixel data follows (DC already high)
+}
+
+// DMA `count` pixels of `color` to the SPI TX FIFO, paced by the SPI DREQ.
+static void push_pixels(uint16_t color, uint32_t count) {
+    static uint16_t cached = 0;
+    static int have = 0;
+    if (!have || cached != color) {
+        uint8_t hi = color >> 8, lo = color & 0xFF;
+        for (int i = 0; i < CHUNK_PX; i++) { chunk[2 * i] = hi; chunk[2 * i + 1] = lo; }
+        cached = color; have = 1;
+    }
+    dma_channel_config c = dma_channel_get_default_config(dma_chan);
+    channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
+    channel_config_set_dreq(&c, spi_get_dreq(LCD_SPI, true));
+    channel_config_set_read_increment(&c, true);
+    channel_config_set_write_increment(&c, false);
+    while (count) {
+        uint32_t n = count > CHUNK_PX ? CHUNK_PX : count;
+        dma_channel_configure(dma_chan, &c, &spi_get_hw(LCD_SPI)->dr, chunk, n * 2, true);
+        dma_channel_wait_for_finish_blocking(dma_chan);
+        count -= n;
+    }
+    wait_spi();
+}
+
+void st7796_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color) {
+    if (w == 0 || h == 0) return;
+    set_window(x, y, x + w - 1, y + h - 1);
+    push_pixels(color, (uint32_t)w * h);
+}
+
+void st7796_fill_screen(uint16_t color) {
+    st7796_fill_rect(0, 0, ST7796_WIDTH, ST7796_HEIGHT, color);
+}
+
+void st7796_init(void) {
+    spi_init(LCD_SPI, LCD_BAUD);
+    gpio_set_function(PIN_SCK,  GPIO_FUNC_SPI);
+    gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
+    gpio_init(PIN_CS);  gpio_set_dir(PIN_CS,  GPIO_OUT); gpio_put(PIN_CS,  1);
+    gpio_init(PIN_DC);  gpio_set_dir(PIN_DC,  GPIO_OUT); gpio_put(PIN_DC,  1);
+    gpio_init(PIN_RST); gpio_set_dir(PIN_RST, GPIO_OUT); gpio_put(PIN_RST, 1);
+    dma_chan = dma_claim_unused_channel(true);
+
+    // Hardware reset pulse.
+    gpio_put(PIN_RST, 1); sleep_ms(10);
+    gpio_put(PIN_RST, 0); sleep_ms(20);
+    gpio_put(PIN_RST, 1); sleep_ms(120);
+
+    gpio_put(PIN_CS, 0);   // single device on the bus: hold CS asserted
+
+    cmd(0x01); sleep_ms(120);                 // software reset
+    cmd(0x11); sleep_ms(120);                 // sleep out
+    cmd(0xF0); dat1(0xC3);                     // command-set control (unlock)
+    cmd(0xF0); dat1(0x96);
+    cmd(0x36); dat1(0x48);                     // MADCTL: MX + BGR (portrait 320x480)
+    cmd(0x3A); dat1(0x55);                     // COLMOD: 16 bits/pixel
+    cmd(0xB4); dat1(0x01);                     // column inversion
+    { uint8_t d[] = {0x80, 0x02, 0x3B};                          cmd(0xB6); dat(d, sizeof d); }
+    { uint8_t d[] = {0x40,0x8A,0x00,0x00,0x29,0x19,0xA5,0x33};   cmd(0xE8); dat(d, sizeof d); }
+    cmd(0xC1); dat1(0x06);
+    cmd(0xC2); dat1(0xA7);
+    cmd(0xC5); dat1(0x18); sleep_ms(120);
+    { uint8_t d[] = {0xF0,0x09,0x0B,0x06,0x04,0x15,0x2F,0x54,0x42,0x3C,0x17,0x14,0x18,0x1B};
+      cmd(0xE0); dat(d, sizeof d); }           // positive gamma
+    { uint8_t d[] = {0xE0,0x09,0x0B,0x06,0x04,0x03,0x2B,0x43,0x42,0x3B,0x16,0x14,0x17,0x1B};
+      cmd(0xE1); dat(d, sizeof d); }           // negative gamma
+    sleep_ms(120);
+    cmd(0xF0); dat1(0x3C);                      // command-set control (lock)
+    cmd(0xF0); dat1(0x69);
+    sleep_ms(120);
+    cmd(0x29);                                  // display on
+}

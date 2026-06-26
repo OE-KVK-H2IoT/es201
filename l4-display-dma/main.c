@@ -1,56 +1,51 @@
-// L4 — move a buffer to SPI with DMA and measure the throughput.
-//
-// SCOPE / HONESTY: the 52Pi EP-0172 ST7796 panel pins are NOT yet confirmed,
-// so the SPI pins below are PLACEHOLDERS and this demo does NOT run the ST7796
-// init sequence — it will not draw to the panel yet. What it DOES do is exercise
-// the real SPI + DMA data path and measure transfer time, which is the core L4
-// mechanism (background data movement while the CPU is free). Put a logic
-// analyzer on the SPI clock to see the burst. Add the panel driver + confirmed
-// pins to turn this into a real framebuffer push. See README.md.
+// L4 — Display and DMA: a self-test for the EP-0172 ST7796 panel.
+// Drives the real panel (pins confirmed from the 52Pi wiki) and cycles through
+// a visual test pattern, reporting DMA fill throughput over USB-serial so you
+// can see both that the display works *and* how fast DMA pushes pixels.
 #include <stdio.h>
 #include "pico/stdlib.h"
-#include "hardware/spi.h"
-#include "hardware/dma.h"
-
-// TODO: confirm against the 52Pi EP-0172 wiki before driving the real panel.
-#define SPI_PORT  spi0
-#define PIN_SCK   18    // placeholder
-#define PIN_MOSI  19    // placeholder
-
-#define BUF_LEN   4096  // bytes per DMA burst
-
-static uint8_t framebuf[BUF_LEN];
+#include "st7796.h"
 
 int main(void) {
     stdio_init_all();
-    sleep_ms(2000);     // give the USB-serial host time to attach
+    sleep_ms(2000);                 // let the USB-serial host attach
+    printf("L4 ST7796 display self-test\n");
 
-    uint baud = spi_init(SPI_PORT, 16 * 1000 * 1000);   // 16 MHz to start
-    gpio_set_function(PIN_SCK,  GPIO_FUNC_SPI);
-    gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
+    st7796_init();
+    printf("init done: %dx%d, SPI0 @ GP2/3, CS5 DC6 RST7\n",
+           ST7796_WIDTH, ST7796_HEIGHT);
 
-    for (int i = 0; i < BUF_LEN; i++) framebuf[i] = (uint8_t)i;
+    const uint16_t cyc[]   = { ST_RED, ST_GREEN, ST_BLUE, ST_WHITE, ST_BLACK };
+    const char    *names[] = { "RED", "GREEN", "BLUE", "WHITE", "BLACK" };
+    const uint16_t bars[]  = { ST_RED, ST_GREEN, ST_BLUE, ST_YELLOW,
+                               ST_CYAN, ST_MAGENTA, ST_WHITE, ST_BLACK };
+    const uint32_t scr_bytes = (uint32_t)ST7796_WIDTH * ST7796_HEIGHT * 2;
 
-    int chan = dma_claim_unused_channel(true);
-    dma_channel_config c = dma_channel_get_default_config(chan);
-    channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
-    channel_config_set_dreq(&c, spi_get_dreq(SPI_PORT, true)); // pace by SPI TX
-    channel_config_set_read_increment(&c, true);
-    channel_config_set_write_increment(&c, false);
-
-    printf("len_bytes,us,mbit_per_s\n");                 // CSV header
     while (true) {
-        uint64_t t0 = time_us_64();
-        dma_channel_configure(chan, &c,
-            &spi_get_hw(SPI_PORT)->dr,  // dst: SPI data register (fixed)
-            framebuf,                   // src: framebuffer (incrementing)
-            BUF_LEN, true);             // start now
-        dma_channel_wait_for_finish_blocking(chan);
-        uint64_t t1 = time_us_64();
+        // 1) Solid-colour cycle with throughput measurement.
+        for (int i = 0; i < 5; i++) {
+            uint64_t t0 = time_us_64();
+            st7796_fill_screen(cyc[i]);
+            uint32_t us = (uint32_t)(time_us_64() - t0);
+            printf("fill %-5s  %5lu us  %.1f MB/s\n",
+                   names[i], (unsigned long)us, scr_bytes / (float)us);
+            sleep_ms(400);
+        }
 
-        uint32_t us = (uint32_t)(t1 - t0);
-        float mbps = us ? (BUF_LEN * 8.0f) / us : 0.0f;  // bits/us == Mbit/s
-        printf("%d,%lu,%.2f   (SPI baud=%u)\n", BUF_LEN, (unsigned long)us, mbps, baud);
-        sleep_ms(500);
+        // 2) Eight vertical colour bars.
+        int bw = ST7796_WIDTH / 8;
+        for (int b = 0; b < 8; b++)
+            st7796_fill_rect(b * bw, 0, bw, ST7796_HEIGHT, bars[b]);
+        printf("colour bars\n");
+        sleep_ms(1500);
+
+        // 3) Vertical gradient (red at top -> blue at bottom), drawn in strips.
+        for (int y = 0; y < ST7796_HEIGHT; y += 4) {
+            uint8_t t = (uint8_t)(255 * y / ST7796_HEIGHT);   // 0..255 down the screen
+            uint16_t color = RGB565(255 - t, 0, t);
+            st7796_fill_rect(0, y, ST7796_WIDTH, 4, color);
+        }
+        printf("gradient\n");
+        sleep_ms(1500);
     }
 }
