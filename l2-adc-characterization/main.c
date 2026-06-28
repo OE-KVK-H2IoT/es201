@@ -7,10 +7,10 @@
 #include "pico/stdlib.h"
 #include "hardware/adc.h"
 
-#define ADC_X_GPIO 26   // joystick X axis -> ADC input 0
-#define ADC_Y_GPIO 27   // joystick Y axis -> ADC input 1
-#define ADC_X      0
-#define ADC_Y      1
+#define ADC_X_GPIO 27   // joystick X (horizontal) -> ADC input 1
+#define ADC_Y_GPIO 26   // joystick Y (vertical)   -> ADC input 0
+#define ADC_X      1
+#define ADC_Y      0
 #define ADC_MAX    4095 // 12-bit full scale
 #define BAR_W      24   // characters in each axis bar
 

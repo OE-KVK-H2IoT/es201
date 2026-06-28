@@ -51,7 +51,7 @@
 #define LOGF(...) ((void)0)
 #endif
 
-#define BOX        40
+#define BOX_SIZE        40
 #define BTN_MODE   14      // K1 (active-low): cycle render strategy
 #define BTN_CLEAR  15      // K2 (active-low): clear
 
@@ -121,10 +121,12 @@ int main(void) {
          (unsigned long)sizeof(fb));
 #endif
 
-    const uint16_t bg = ST_BLACK, box = ST_CYAN;
-    st7796_fill_screen(bg);
+    const uint16_t bg_color = ST_BLACK, box_color = ST_CYAN;
+    st7796_fill_screen(bg_color);
 
-    int x = 60, y = 80, dx = 3, dy = 4, ox = x, oy = y;
+    int box_x = 60, box_y = 80;          // box top-left corner, in pixels
+    int vel_x = 3,  vel_y = 4;           // pixels the box moves each frame
+    int old_x = box_x, old_y = box_y;    // previous position (erased in DIRTY mode)
     int mode = START_MODE;
     LOGF("[mode] %s\n", mode_name[mode]);
 
@@ -133,44 +135,45 @@ int main(void) {
     uint64_t render_sum = 0;                 // total time spent actually rendering
     const uint32_t frame_us = TARGET_FPS ? 1000000u / TARGET_FPS : 0;
     uint64_t next_frame = time_us_64();
-    bool m_last = false, c_last = false;
+    bool mode_was_pressed = false, clear_was_pressed = false;
 
     while (true) {
-        // --- buttons ---
-        bool m = !gpio_get(BTN_MODE), c = !gpio_get(BTN_CLEAR);
-        if (m && !m_last) {
+        // --- buttons (edge-detected, active-low) ---
+        bool mode_pressed  = !gpio_get(BTN_MODE);
+        bool clear_pressed = !gpio_get(BTN_CLEAR);
+        if (mode_pressed && !mode_was_pressed) {
             mode = (mode + 1) % N_MODES;
-            st7796_fill_screen(bg);
+            st7796_fill_screen(bg_color);
             LOGF("[mode] %s\n", mode_name[mode]);
         }
-        if (c && !c_last) { st7796_fill_screen(bg); LOGF("[K2] clear\n"); }
-        m_last = m; c_last = c;
+        if (clear_pressed && !clear_was_pressed) { st7796_fill_screen(bg_color); LOGF("[K2] clear\n"); }
+        mode_was_pressed = mode_pressed; clear_was_pressed = clear_pressed;
 
         // --- move the box, bouncing off the edges ---
-        ox = x; oy = y;
-        x += dx; y += dy;
-        if (x < 0 || x + BOX >= ST7796_WIDTH)  { dx = -dx; x += dx; }
-        if (y < 0 || y + BOX >= ST7796_HEIGHT) { dy = -dy; y += dy; }
+        old_x = box_x; old_y = box_y;
+        box_x += vel_x; box_y += vel_y;
+        if (box_x < 0 || box_x + BOX_SIZE >= ST7796_WIDTH)  { vel_x = -vel_x; box_x += vel_x; }
+        if (box_y < 0 || box_y + BOX_SIZE >= ST7796_HEIGHT) { vel_y = -vel_y; box_y += vel_y; }
 
         // --- render with the selected strategy (timed, so we can show headroom) ---
-        uint64_t r0 = time_us_64();
+        uint64_t render_start = time_us_64();
         if (mode == MODE_DIRTY) {
-            st7796_fill_rect(ox, oy, BOX, BOX, bg);     // erase only what we vacated
-            st7796_fill_rect(x,  y,  BOX, BOX, box);    // draw only what's new
+            st7796_fill_rect(old_x, old_y, BOX_SIZE, BOX_SIZE, bg_color);   // erase only what we vacated
+            st7796_fill_rect(box_x, box_y, BOX_SIZE, BOX_SIZE, box_color);  // draw only what's new
         }
 #if ENABLE_DBUF
         else if (mode == MODE_DBUF) {
-            fb_rect(0, 0, ST7796_WIDTH, ST7796_HEIGHT, bg);  // render off-screen (fast RAM)
-            fb_rect(x, y, BOX, BOX, box);
-            st7796_blit(0, 0, ST7796_WIDTH, ST7796_HEIGHT, fb);  // ...then push the WHOLE frame
+            fb_rect(0, 0, ST7796_WIDTH, ST7796_HEIGHT, bg_color);  // render off-screen (fast RAM)
+            fb_rect(box_x, box_y, BOX_SIZE, BOX_SIZE, box_color);
+            st7796_blit(0, 0, ST7796_WIDTH, ST7796_HEIGHT, fb);   // ...then push the WHOLE frame
         }
 #endif
         else {  // MODE_FULL
-            st7796_fill_screen(bg);
-            st7796_fill_rect(x, y, BOX, BOX, box);
+            st7796_fill_screen(bg_color);
+            st7796_fill_rect(box_x, box_y, BOX_SIZE, BOX_SIZE, box_color);
         }
 
-        render_sum += time_us_64() - r0;
+        render_sum += time_us_64() - render_start;
 
         // --- live fps + how much of the frame budget each strategy actually used ---
         frames++;

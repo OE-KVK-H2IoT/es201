@@ -58,7 +58,7 @@ arm-none-eabi-gdb build/l0-getting-started/l0_blink.elf
 | `l1-gpio-timers-interrupts/` | L1 | `l1_timer_blink` | ✅ builds (verify on board) |
 | `l2-adc-characterization/` | L2 | `l2_adc_read` | ✅ joystick X/Y raw readout + live range |
 | `l3-pwm-signal-generation/` | L3 | `l3_pwm_tone` | ✅ builds (verify on board) |
-| `l4-display-dma/` | L4 | `l4_display`, `l4_touch`, `l4_optimize` | ✅ panel self-test + GT911 touch paint + full vs dirty vs double-buffer fps demo |
+| `l4-display-dma/` | L4 | `l4_display`, `l4_touch`, `l4_optimize`, `l4_joybox` | ✅ panel self-test + GT911 touch paint + full vs dirty vs double-buffer fps demo |
 | `l5-freertos-tasks/` | L5 | — | 🚧 needs FreeRTOS-Kernel |
 | `l6-capstone-mini-scope/` | L6 | — | 🚧 integration (ADC + DMA + display) |
 
