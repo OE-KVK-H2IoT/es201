@@ -7,8 +7,9 @@ a line over sample index. No fancy parsing, no per-demo config.
 
 Capture with the pure-bash logger, then plot:
     ./serial-log.sh | tee adc.log        # capture (Ctrl-C to stop)
-    python3 host/plot.py adc.log         # plot every key it finds
+    python3 host/plot.py adc.log         # plot every key it finds (value vs sample)
     python3 host/plot.py adc.log x y     # only these keys
+    python3 host/plot.py adc.log x --hist  # distribution (ADC noise: Gaussian or not?)
     ./serial-log.sh | python3 host/plot.py     # or pipe straight in (then Ctrl-C)
 
 Needs matplotlib:  pip install matplotlib
@@ -19,6 +20,8 @@ PAIR = re.compile(r'([A-Za-z_]\w*)\s*=\s*(-?\d+(?:\.\d+)?)')
 
 def main():
     args = sys.argv[1:]
+    hist = "--hist" in args                 # --hist: distribution instead of time series
+    args = [a for a in args if a != "--hist"]
     infile = None
     if args and os.path.exists(args[0]):
         infile = args[0]
@@ -41,11 +44,18 @@ def main():
 
     import matplotlib
     import matplotlib.pyplot as plt
-    for key, values in series.items():
-        plt.plot(values, label=f"{key}  (n={len(values)})")
-    plt.xlabel("sample index")
-    plt.ylabel("value")
-    plt.title(f"es201 serial log: {infile or 'stdin'}")
+    import statistics
+    if hist:                                # distribution view — e.g. ADC noise at rest
+        for key, values in series.items():
+            sd = statistics.pstdev(values) if len(values) > 1 else 0.0
+            plt.hist(values, bins=40, alpha=0.6, label=f"{key}  (n={len(values)}, σ={sd:.1f})")
+        plt.xlabel("value"); plt.ylabel("count")
+        plt.title(f"es201 histogram: {infile or 'stdin'}")
+    else:                                   # time series — value vs sample index
+        for key, values in series.items():
+            plt.plot(values, label=f"{key}  (n={len(values)})")
+        plt.xlabel("sample index"); plt.ylabel("value")
+        plt.title(f"es201 serial log: {infile or 'stdin'}")
     plt.legend()
     plt.grid(True, alpha=0.3)
 
