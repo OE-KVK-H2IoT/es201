@@ -89,6 +89,11 @@ int main(void) {
     // power-cycle and back off. set_sys_clock_khz(...,false) leaves the default
     // if the exact rate isn't synthesizable.
     set_sys_clock_khz(SYS_MHZ * 1000u, false);
+    // CRUCIAL: set_sys_clock_khz leaves clk_peri on the 48 MHz USB PLL, which
+    // would SLOW the SPI. Re-point clk_peri at the (now faster) system clock so
+    // SPI and UART actually speed up with the overclock.
+    clock_configure(clk_peri, 0, CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLK_SYS,
+                    SYS_MHZ * 1000000u, SYS_MHZ * 1000000u);
 #endif
     stdio_init_all();
     setvbuf(stdout, NULL, _IONBF, 0);
