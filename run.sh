@@ -52,6 +52,15 @@ list_targets() {
         | sed -E 's/.*\(\s*//' | sort -u
 }
 
+# Recognised build knobs = the names listed in each lab's `foreach(opt ...)`
+# (which are forwarded to -D defines), plus PICO_BOARD. Used to catch typos.
+known_knobs() {
+    { printf '%s\n' PICO_BOARD
+      grep -rhoE 'foreach\(opt[^)]*\)' "$HERE"/l*/CMakeLists.txt 2>/dev/null \
+          | sed -E 's/foreach\(opt//; s/\)//'
+    } | tr ' ' '\n' | sed '/^$/d' | sort -u
+}
+
 build_target() {
     configure
     if [ -n "${1:-}" ]; then
@@ -93,10 +102,18 @@ cmd="${1:-}"; shift || true
 # Split remaining args into KEY=VAL build overrides (forwarded as -D...) and
 # positional args. Lets you override compile-time defines without editing source:
 #   ./run.sh flash l4_optimize START_MODE=1 ENABLE_DBUF=0
-defs=(); pos=()
+defs=(); pos=(); known="$(known_knobs)"
 for a in "$@"; do
     case "$a" in
-        *=*) defs+=("-D$a") ;;
+        *=*)
+            key="${a%%=*}"
+            if ! printf '%s\n' "$known" | grep -qx "$key"; then
+                echo "!! unknown build knob '$key' — likely a typo, so it will do NOTHING." >&2
+                echo "   Recognised knobs: $(printf '%s ' $known)" >&2
+                echo "   (e.g. the SPI clock is LCD_MHZ, not SPI_BAUD)" >&2
+            fi
+            defs+=("-D$a")
+            ;;
         *)   pos+=("$a") ;;
     esac
 done
