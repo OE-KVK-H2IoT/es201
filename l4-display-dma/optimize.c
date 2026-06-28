@@ -23,6 +23,7 @@
 // ===========================================================================
 #include <stdio.h>
 #include "pico/stdlib.h"
+#include "hardware/clocks.h"
 #include "st7796.h"
 
 // These are overridable from the build command (run.sh ... KEY=VAL, or
@@ -90,6 +91,14 @@ int main(void) {
     LOGF("SPI granted = %lu Hz -> full-frame ceiling ~%.1f fps (%lu bytes/frame)\n",
          (unsigned long)st7796_spi_hz(), st7796_spi_hz() / 8.0f / frame_bytes,
          (unsigned long)frame_bytes);
+    // Where that number comes from: the clock-divider chain that feeds the SPI.
+    // crystal -> PLL -> clk_sys -> clk_peri -> SPI prescaler = SCK. Each stage
+    // only divides by certain ratios, so the final SCK is quantised.
+    uint32_t perihz = clock_get_hz(clk_peri);
+    LOGF("clocks: clk_sys=%lu Hz  clk_peri=%lu Hz  SPI = clk_peri / %lu = %lu Hz\n",
+         (unsigned long)clock_get_hz(clk_sys), (unsigned long)perihz,
+         (unsigned long)(st7796_spi_hz() ? perihz / st7796_spi_hz() : 0),
+         (unsigned long)st7796_spi_hz());
 #if ENABLE_DBUF
     LOGF("double-buffer mode ON: host framebuffer = %lu bytes of SRAM\n",
          (unsigned long)sizeof(fb));
