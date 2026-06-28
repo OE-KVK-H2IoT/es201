@@ -1,38 +1,46 @@
-// L2 — read one ADC channel (joystick X on GP26/ADC0) and characterise it.
-// Prints raw 12-bit counts and the converted voltage, plus a running mean over
-// a block of samples so you can see the noise floor. CSV-friendly output: pipe
-// it to a file and analyse on the host (numpy/matplotlib).
+// L2 — read BOTH joystick axes and print their raw 12-bit values live.
+// X is on GP26 = ADC input 0, Y is on GP27 = ADC input 1. The RP2350 has a
+// single ADC converter shared by the inputs, so you SELECT a channel, then read,
+// and repeat per axis (round-robin). Output is CSV-friendly: pipe it to a file
+// and plot X vs Y on the host. A trailing note shows the min..max each axis has
+// reached, so swinging the stick to its corners *characterises its real range*.
 #include <stdio.h>
 #include "pico/stdlib.h"
 #include "hardware/adc.h"
 
-#define ADC_GPIO   26   // GP26 = ADC input 0 (joystick X axis)
-#define ADC_CHAN    0
-#define BLOCK     100   // samples per reported block
+#define ADC_X_GPIO 26   // joystick X axis -> ADC input 0
+#define ADC_Y_GPIO 27   // joystick Y axis -> ADC input 1
+#define ADC_X      0
+#define ADC_Y      1
+
+// One converter: pick the input, then read its 12-bit (0..4095) result.
+static uint16_t read_axis(uint input) {
+    adc_select_input(input);
+    return adc_read();
+}
 
 int main(void) {
     stdio_init_all();
+    sleep_ms(2000);
+    printf("\nL2 ADC — joystick X/Y raw readout (12-bit 0..4095, 3.3 V ref)\n");
+    printf("Move the stick: each axis tracks its own value; centre is ~2048.\n\n");
+
     adc_init();
-    adc_gpio_init(ADC_GPIO);     // disable digital input on the ADC pin
-    adc_select_input(ADC_CHAN);
+    adc_gpio_init(ADC_X_GPIO);     // disable the pin's digital input/pulls for analog use
+    adc_gpio_init(ADC_Y_GPIO);
 
-    const float to_volts = 3.3f / (1 << 12);   // 12-bit, 3.3 V reference
+    const float to_v = 3.3f / (1 << 12);
+    uint16_t xlo = 0xFFFF, xhi = 0, ylo = 0xFFFF, yhi = 0;   // range seen so far
 
-    printf("block,mean_raw,mean_v\n");          // CSV header
-    uint32_t block = 0;
+    printf("x_raw,y_raw,x_volt,y_volt\n");   // CSV header
     while (true) {
-        uint32_t sum = 0;
-        uint16_t lo = 0xFFFF, hi = 0;
-        for (int i = 0; i < BLOCK; i++) {
-            uint16_t raw = adc_read();
-            sum += raw;
-            if (raw < lo) lo = raw;
-            if (raw > hi) hi = raw;
-            sleep_us(200);
-        }
-        float mean = (float)sum / BLOCK;
-        printf("%lu,%.1f,%.4f   (min=%u max=%u spread=%u)\n",
-               (unsigned long)block++, mean, mean * to_volts, lo, hi, hi - lo);
-        sleep_ms(200);
+        uint16_t x = read_axis(ADC_X);
+        uint16_t y = read_axis(ADC_Y);
+        if (x < xlo) xlo = x;  if (x > xhi) xhi = x;
+        if (y < ylo) ylo = y;  if (y > yhi) yhi = y;
+
+        printf("%4u,%4u,%.3f,%.3f   (range  x:%u-%u  y:%u-%u)\n",
+               x, y, x * to_v, y * to_v, xlo, xhi, ylo, yhi);
+        sleep_ms(100);
     }
 }
