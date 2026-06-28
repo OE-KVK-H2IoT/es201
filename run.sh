@@ -6,8 +6,11 @@
 #   ./run.sh flash <target>      build that target and flash it over SWD
 #   ./run.sh monitor [device]    open the USB-serial console (default /dev/ttyACM0)
 #   ./run.sh <target>            shorthand: flash <target>, then monitor
+#   ./run.sh flash l4_optimize START_MODE=1   override a compile-time #define
 #
-# Env overrides: PICO_BOARD (pico2|pico2_w), SERIAL (/dev/ttyACMx), ADAPTER_SPEED.
+# Trailing KEY=VAL args become -DKEY=VAL build defines (they persist in the CMake
+# cache until you set them again). Env overrides: PICO_BOARD (pico2|pico2_w),
+# SERIAL (/dev/ttyACMx), ADAPTER_SPEED.
 # Needs a working toolchain + RP2350-capable OpenOCD — see the course docs:
 #   Architecture of Embedded Systems -> Environment Setup (Linux).
 set -euo pipefail
@@ -86,11 +89,27 @@ monitor() {
 }
 
 cmd="${1:-}"; shift || true
+
+# Split remaining args into KEY=VAL build overrides (forwarded as -D...) and
+# positional args. Lets you override compile-time defines without editing source:
+#   ./run.sh flash l4_optimize START_MODE=1 ENABLE_DBUF=0
+defs=(); pos=()
+for a in "$@"; do
+    case "$a" in
+        *=*) defs+=("-D$a") ;;
+        *)   pos+=("$a") ;;
+    esac
+done
+if [ "${#defs[@]}" -gt 0 ]; then
+    echo ">> build overrides: ${defs[*]}"
+    cmake -S "$HERE" -B "$BUILD" ${PICO_BOARD:+-DPICO_BOARD=$PICO_BOARD} "${defs[@]}"
+fi
+
 case "$cmd" in
     list)         list_targets ;;
-    build)        build_target "${1:-}" ;;
-    flash)        [ -n "${1:-}" ] || { echo "usage: ./run.sh flash <target>"; exit 2; }; flash_target "$1" ;;
-    monitor)      monitor "${1:-}" ;;
-    ""|-h|--help) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' ;;
-    *)            flash_target "$cmd"; monitor ;;   # e.g. ./run.sh l3_pwm_tone
+    build)        build_target "${pos[0]:-}" ;;
+    flash)        [ -n "${pos[0]:-}" ] || { echo "usage: ./run.sh flash <target> [KEY=VAL ...]"; exit 2; }; flash_target "${pos[0]}" ;;
+    monitor)      monitor "${pos[0]:-}" ;;
+    ""|-h|--help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//' ;;
+    *)            flash_target "$cmd"; monitor ;;   # e.g. ./run.sh l4_optimize START_MODE=1
 esac

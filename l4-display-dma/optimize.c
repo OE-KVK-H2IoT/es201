@@ -25,9 +25,17 @@
 #include "pico/stdlib.h"
 #include "st7796.h"
 
+// These are overridable from the build command (run.sh ... KEY=VAL, or
+// cmake -DKEY=VAL), so the #ifndef guards keep the in-file value as the default.
+#ifndef LOG
 #define LOG          1
+#endif
+#ifndef ENABLE_DBUF
 #define ENABLE_DBUF  1     // set 0 to drop the double-buffer mode and save 300 KB SRAM
+#endif
+#ifndef START_MODE
 #define START_MODE   0     // 0 = FULL, 1 = DIRTY, 2 = DBUF
+#endif
 
 #if LOG
 #define LOGF(...) printf(__VA_ARGS__)
