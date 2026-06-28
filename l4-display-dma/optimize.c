@@ -40,6 +40,10 @@
 #ifndef TARGET_FPS
 #define TARGET_FPS   60    // cap the animation to a steady rate; 0 = uncapped (raw max)
 #endif
+#ifndef SYS_MHZ
+#define SYS_MHZ      0     // 0 = leave the RP2350 default (150 MHz). Else overclock clk_sys
+#endif                     // (and clk_peri with it), opening new SPI divider steps.
+                           // Experiment: ./run.sh flash l4_optimize SYS_MHZ=200 LCD_MHZ=100
 
 #if LOG
 #define LOGF(...) printf(__VA_ARGS__)
@@ -78,6 +82,14 @@ static void fb_rect(int x, int y, int w, int h, uint16_t color) {
 #endif
 
 int main(void) {
+#if SYS_MHZ
+    // Overclock the system clock BEFORE stdio, so the UART baud (clocked from
+    // clk_peri) is computed against the new rate. Very high values may hang or
+    // need a core-voltage bump (vreg_set_voltage) — that hang IS the experiment:
+    // power-cycle and back off. set_sys_clock_khz(...,false) leaves the default
+    // if the exact rate isn't synthesizable.
+    set_sys_clock_khz(SYS_MHZ * 1000u, false);
+#endif
     stdio_init_all();
     setvbuf(stdout, NULL, _IONBF, 0);
     sleep_ms(2000);
