@@ -36,6 +36,9 @@
 #ifndef START_MODE
 #define START_MODE   0     // 0 = FULL, 1 = DIRTY, 2 = DBUF
 #endif
+#ifndef TARGET_FPS
+#define TARGET_FPS   60    // cap the animation to a steady rate; 0 = uncapped (raw max)
+#endif
 
 #if LOG
 #define LOGF(...) printf(__VA_ARGS__)
@@ -101,6 +104,9 @@ int main(void) {
 
     uint64_t rate_t0 = time_us_64();
     uint32_t frames = 0;
+    uint64_t render_sum = 0;                 // total time spent actually rendering
+    const uint32_t frame_us = TARGET_FPS ? 1000000u / TARGET_FPS : 0;
+    uint64_t next_frame = time_us_64();
     bool m_last = false, c_last = false;
 
     while (true) {
@@ -120,7 +126,8 @@ int main(void) {
         if (x < 0 || x + BOX >= ST7796_WIDTH)  { dx = -dx; x += dx; }
         if (y < 0 || y + BOX >= ST7796_HEIGHT) { dy = -dy; y += dy; }
 
-        // --- render with the selected strategy ---
+        // --- render with the selected strategy (timed, so we can show headroom) ---
+        uint64_t r0 = time_us_64();
         if (mode == MODE_DIRTY) {
             st7796_fill_rect(ox, oy, BOX, BOX, bg);     // erase only what we vacated
             st7796_fill_rect(x,  y,  BOX, BOX, box);    // draw only what's new
@@ -137,12 +144,26 @@ int main(void) {
             st7796_fill_rect(x, y, BOX, BOX, box);
         }
 
-        // --- live fps so each strategy's cost is a number ---
+        render_sum += time_us_64() - r0;
+
+        // --- live fps + how much of the frame budget each strategy actually used ---
         frames++;
         uint64_t now = time_us_64();
         if (now - rate_t0 >= 1000000) {
-            LOGF("[fps] %-13s: %lu fps\n", mode_name[mode], (unsigned long)frames);
-            rate_t0 = now; frames = 0;
+            LOGF("[fps] %-13s: %lu fps  (render %.1f ms/frame, budget %.1f ms)\n",
+                 mode_name[mode], (unsigned long)frames,
+                 render_sum / 1000.0f / frames, frame_us ? frame_us / 1000.0f : 0.0f);
+            rate_t0 = now; frames = 0; render_sum = 0;
+        }
+
+        // --- frame pacing: hold a steady animation rate; the spare time is free
+        //     (CPU for other work, or just idle power). FULL can't keep up, so it
+        //     falls behind and runs at its own ~13 fps; DIRTY easily makes budget. ---
+        if (frame_us) {
+            next_frame += frame_us;
+            int64_t wait = (int64_t)(next_frame - time_us_64());
+            if (wait > 0) sleep_us((uint32_t)wait);
+            else          next_frame = time_us_64();   // behind: don't bank debt
         }
     }
 }
