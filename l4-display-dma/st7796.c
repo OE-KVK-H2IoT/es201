@@ -11,10 +11,10 @@
 #define PIN_CS    5
 #define PIN_DC    6
 #define PIN_RST   7
-#ifndef LCD_BAUD
-#define LCD_BAUD  (62 * 1000 * 1000)   // requested SPI clock; ST7796 tolerates ~62.5-80 MHz.
-#endif                                 // Overridable: ./run.sh flash l4_optimize LCD_BAUD=75000000
-                                       // (the hardware grants the nearest achievable rate <= this)
+#ifndef LCD_MHZ
+#define LCD_MHZ  62        // requested SPI clock in MHz (ST7796 tolerates ~62-80).
+#endif                     // Override: ./run.sh flash l4_optimize LCD_MHZ=75
+#define LCD_BAUD  (LCD_MHZ * 1000000u)  // the hardware grants the nearest achievable rate <= this
 
 static int      dma_chan;
 static uint32_t granted_hz;     // the SPI clock the hardware actually gave us

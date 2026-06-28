@@ -6,7 +6,7 @@
 #   ./run.sh flash <target>      build that target and flash it over SWD
 #   ./run.sh monitor [device]    open the USB-serial console (default /dev/ttyACM0)
 #   ./run.sh <target>            shorthand: flash <target>, then monitor
-#   ./run.sh flash l4_optimize START_MODE=1   override a compile-time #define
+#   ./run.sh flash l4_optimize START_MODE=1 LCD_MHZ=75   override compile-time #defines
 #
 # Trailing KEY=VAL args become -DKEY=VAL build defines (they persist in the CMake
 # cache until you set them again). Env overrides: PICO_BOARD (pico2|pico2_w),
