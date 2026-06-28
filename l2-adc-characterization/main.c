@@ -44,6 +44,6 @@ int main(void) {
         printf("x=%4u y=%4u  X ", x, y); put_bar(x);
         printf("  Y ");                  put_bar(y);
         printf("\n");
-        sleep_ms(100);
+        sleep_ms(50);
     }
 }
