@@ -91,10 +91,8 @@ monitor() {
     [ -z "$dev" ] && dev="$(find_acm_by_pid 0009 || true)"   # Pico USB-CDC
     [ -z "$dev" ] && { echo "!! no Pico/probe serial port found (probe plugged in? UART wired to GP0/GP1?)"; exit 1; }
     echo ">> serial monitor on $dev"
-    if   command -v tio     >/dev/null; then exec tio "$dev"
-    elif command -v picocom >/dev/null; then exec picocom -b 115200 "$dev"
-    elif command -v minicom >/dev/null; then exec minicom -D "$dev"
-    else echo "(install tio/picocom/minicom for a nicer console)"; exec cat "$dev"; fi
+    # Pure-bash terminal (stty + cat) — no tio/minicom/picocom dependency.
+    exec "$HERE/serial-term.sh" "$dev" 115200
 }
 
 cmd="${1:-}"; shift || true
