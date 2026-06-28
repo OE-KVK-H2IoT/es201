@@ -54,6 +54,14 @@ int main(void) {
     button_init(BTN_MODE);
     button_init(BTN_CLEAR);
 
+    // The honest ceiling: a full frame is W*H*2 bytes; at the SPI clock the
+    // hardware ACTUALLY granted (often less than requested) that sets a hard
+    // max fps no amount of code cleverness can beat. Measure it, don't assume it.
+    uint32_t frame_bytes = (uint32_t)ST7796_WIDTH * ST7796_HEIGHT * 2;
+    LOGF("SPI granted = %lu Hz -> full-frame ceiling ~%.1f fps (%lu bytes/frame)\n",
+         (unsigned long)st7796_spi_hz(),
+         st7796_spi_hz() / 8.0f / frame_bytes, (unsigned long)frame_bytes);
+
     const uint16_t bg = ST_BLACK, box = ST_CYAN;
     st7796_fill_screen(bg);
 

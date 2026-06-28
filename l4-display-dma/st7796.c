@@ -13,9 +13,11 @@
 #define PIN_RST   7
 #define LCD_BAUD  (62 * 1000 * 1000)   // 62 MHz; ST7796 tolerates up to ~62.5 MHz
 
-#define CHUNK_PX  512                  // pixels streamed per DMA burst
-static uint8_t  chunk[CHUNK_PX * 2];   // big-endian RGB565, refilled on colour change
 static int      dma_chan;
+static uint32_t granted_hz;     // the SPI clock the hardware actually gave us
+static uint8_t  colour2[2] __attribute__((aligned(2)));  // one pixel, big-endian, repeated by DMA
+
+uint32_t st7796_spi_hz(void) { return granted_hz; }
 
 static void wait_spi(void) { while (spi_is_busy(LCD_SPI)) tight_loop_contents(); }
 
@@ -38,26 +40,22 @@ static void set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
     cmd(0x2C);   // RAM write; pixel data follows (DC already high)
 }
 
-// DMA `count` pixels of `color` to the SPI TX FIFO, paced by the SPI DREQ.
+// Fill `count` pixels with one colour in a SINGLE DMA transfer, paced by the SPI
+// DREQ. The trick that makes it fast: a read-address RING that wraps every 2
+// bytes, so the DMA re-reads the same 2-byte colour over and over. We don't have
+// to build a big source buffer, and there is no per-chunk setup/wait overhead —
+// the whole fill is one streamed transfer, so we get close to the SPI's ceiling.
 static void push_pixels(uint16_t color, uint32_t count) {
-    static uint16_t cached = 0;
-    static int have = 0;
-    if (!have || cached != color) {
-        uint8_t hi = color >> 8, lo = color & 0xFF;
-        for (int i = 0; i < CHUNK_PX; i++) { chunk[2 * i] = hi; chunk[2 * i + 1] = lo; }
-        cached = color; have = 1;
-    }
+    colour2[0] = color >> 8;            // big-endian: ST7796 wants the high byte first
+    colour2[1] = color & 0xFF;
     dma_channel_config c = dma_channel_get_default_config(dma_chan);
     channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
     channel_config_set_dreq(&c, spi_get_dreq(LCD_SPI, true));
     channel_config_set_read_increment(&c, true);
     channel_config_set_write_increment(&c, false);
-    while (count) {
-        uint32_t n = count > CHUNK_PX ? CHUNK_PX : count;
-        dma_channel_configure(dma_chan, &c, &spi_get_hw(LCD_SPI)->dr, chunk, n * 2, true);
-        dma_channel_wait_for_finish_blocking(dma_chan);
-        count -= n;
-    }
+    channel_config_set_ring(&c, false, 1);   // wrap the READ address every 2^1 = 2 bytes
+    dma_channel_configure(dma_chan, &c, &spi_get_hw(LCD_SPI)->dr, colour2, count * 2, true);
+    dma_channel_wait_for_finish_blocking(dma_chan);
     wait_spi();
 }
 
@@ -72,7 +70,7 @@ void st7796_fill_screen(uint16_t color) {
 }
 
 void st7796_init(void) {
-    spi_init(LCD_SPI, LCD_BAUD);
+    granted_hz = spi_init(LCD_SPI, LCD_BAUD);   // returns the ACTUAL baud granted
     gpio_set_function(PIN_SCK,  GPIO_FUNC_SPI);
     gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
     gpio_init(PIN_CS);  gpio_set_dir(PIN_CS,  GPIO_OUT); gpio_put(PIN_CS,  1);

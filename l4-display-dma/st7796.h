@@ -23,3 +23,4 @@
 void st7796_init(void);
 void st7796_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color);
 void st7796_fill_screen(uint16_t color);
+uint32_t st7796_spi_hz(void);   // the ACTUAL SPI clock granted (often < requested)
