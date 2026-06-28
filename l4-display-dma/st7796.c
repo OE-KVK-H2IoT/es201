@@ -69,6 +69,25 @@ void st7796_fill_screen(uint16_t color) {
     st7796_fill_rect(0, 0, ST7796_WIDTH, ST7796_HEIGHT, color);
 }
 
+// Blit a host RGB565 buffer into a window. We switch the SPI to 16-bit frames so
+// each uint16_t pixel goes out most-significant-byte first (= big-endian RGB565
+// on the wire, which is what the ST7796 expects), DMA the whole buffer, then
+// switch back to 8-bit for the command path.
+void st7796_blit(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint16_t *buf) {
+    set_window(x, y, x + w - 1, y + h - 1);     // commands are 8-bit
+    wait_spi();
+    spi_set_format(LCD_SPI, 16, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
+    dma_channel_config c = dma_channel_get_default_config(dma_chan);
+    channel_config_set_transfer_data_size(&c, DMA_SIZE_16);
+    channel_config_set_dreq(&c, spi_get_dreq(LCD_SPI, true));
+    channel_config_set_read_increment(&c, true);
+    channel_config_set_write_increment(&c, false);
+    dma_channel_configure(dma_chan, &c, &spi_get_hw(LCD_SPI)->dr, buf, (uint32_t)w * h, true);
+    dma_channel_wait_for_finish_blocking(dma_chan);
+    wait_spi();
+    spi_set_format(LCD_SPI, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
+}
+
 void st7796_init(void) {
     granted_hz = spi_init(LCD_SPI, LCD_BAUD);   // returns the ACTUAL baud granted
     gpio_set_function(PIN_SCK,  GPIO_FUNC_SPI);
