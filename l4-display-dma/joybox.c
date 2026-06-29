@@ -60,8 +60,9 @@ int main(void) {
     printf("calibrating bias — leave the stick centred...\n");
     uint16_t rest_x = measure_bias(JOY_X_INPUT);
     uint16_t rest_y = measure_bias(JOY_Y_INPUT);
-    printf("rest bias: x=%u y=%u  (subtracted, so centred stick -> centred box)\n",
-           rest_x, rest_y);
+    // Log the measured bias as key=value (distinct keys, so a logger/plot can
+    // pick it out without confusing it for a live sample).
+    printf("bias_x=%u bias_y=%u\n", rest_x, rest_y);
 
     const uint16_t background_color = ST_BLACK, box_color = ST_CYAN;
     st7796_fill_screen(background_color);
@@ -85,7 +86,11 @@ int main(void) {
                 st7796_fill_rect(previous_x, previous_y, BOX_SIZE, BOX_SIZE, background_color);
             st7796_fill_rect(box_x, box_y, BOX_SIZE, BOX_SIZE, box_color);
             previous_x = box_x; previous_y = box_y;
-            printf("x=%4u y=%4u  defl=%+5d,%+5d  ->  box (%3d, %3d)\n",
+            // Clean key=value so serial-log.sh + host/plot.py can plot it:
+            //   x,y   = raw (carry the bias, sit near ~2031/1981 at rest)
+            //   cx,cy = bias-corrected (sit near 0 at rest) — the offset removed
+            //   boxx,boxy = resulting box position
+            printf("x=%u y=%u cx=%d cy=%d boxx=%d boxy=%d\n",
                    joystick_x, joystick_y,
                    (int)joystick_x - rest_x, (int)joystick_y - rest_y, box_x, box_y);
         }
