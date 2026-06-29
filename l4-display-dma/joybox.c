@@ -19,8 +19,16 @@
 #define JOY_X_GPIO      27
 #define JOY_Y_GPIO      26
 #define BOX_SIZE        30   // box side, in pixels
+#ifndef CAL_SAMPLES
 #define CAL_SAMPLES     256  // samples averaged to measure the resting bias
+#endif
+#ifndef FULL_DEFLECTION
 #define FULL_DEFLECTION 1800 // counts from rest to a stick extreme (maps to a screen edge)
+#endif
+#ifndef DEADZONE
+#define DEADZONE        24   // ignore deflections within +/- this (counts) — sized just
+#endif                       // above the measured rest-noise peak-to-peak so the box
+                             // won't twitch at rest. Override: ./run.sh flash l4_joybox DEADZONE=30
 
 // One ADC converter shared by the inputs: select the channel, then read it.
 static uint16_t read_joystick(uint adc_input) {
@@ -42,6 +50,12 @@ static uint16_t measure_bias(uint adc_input) {
 // centre: deflection from rest, scaled so a full throw reaches the edge, clamped.
 static int centered_position(uint16_t reading, uint16_t rest, int travel) {
     int deflection = (int)reading - (int)rest;
+    // Deadzone: deflections smaller than the rest noise are ignored, so the box
+    // doesn't twitch when you're not touching the stick. Past the deadzone we
+    // subtract it, so motion stays continuous (no jump at the edge of the zone).
+    if (deflection >  DEADZONE)      deflection -= DEADZONE;
+    else if (deflection < -DEADZONE) deflection += DEADZONE;
+    else                             deflection  = 0;
     int pos = travel / 2 + deflection * (travel / 2) / FULL_DEFLECTION;
     return pos < 0 ? 0 : (pos > travel ? travel : pos);
 }

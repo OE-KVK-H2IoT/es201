@@ -20,8 +20,9 @@ PAIR = re.compile(r'([A-Za-z_]\w*)\s*=\s*(-?\d+(?:\.\d+)?)')
 
 def main():
     args = sys.argv[1:]
-    hist = "--hist" in args                 # --hist: distribution instead of time series
-    args = [a for a in args if a != "--hist"]
+    hist  = "--hist" in args                 # --hist: distribution instead of time series
+    stats = "--stats" in args                # --stats: print mean/sigma/p2p/ENOB per key
+    args = [a for a in args if a not in ("--hist", "--stats")]
     infile = None
     if args and os.path.exists(args[0]):
         infile = args[0]
@@ -41,6 +42,18 @@ def main():
 
     if not series:
         sys.exit("no 'key=value' numbers found — is the log in key=value form?")
+
+    if stats:                               # measure/quality-check: stats per series
+        import statistics, math
+        print(f"{'key':>8}{'n':>7}{'mean':>10}{'sigma':>8}{'min':>8}{'max':>8}{'p2p':>7}{'ENOB*':>7}")
+        for key, v in series.items():
+            if len(v) < 2:
+                continue
+            sd = statistics.pstdev(v)
+            enob = 12 - math.log2(sd / 0.289) if sd > 0 else float("inf")
+            print(f"{key:>8}{len(v):>7}{statistics.mean(v):>10.2f}{sd:>8.2f}"
+                  f"{min(v):>8.0f}{max(v):>8.0f}{max(v)-min(v):>7.0f}{enob:>7.1f}")
+        print("(*ENOB est. assumes 12-bit full scale; meaningful for raw ADC counts)")
 
     import matplotlib
     import matplotlib.pyplot as plt

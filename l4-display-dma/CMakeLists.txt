@@ -10,6 +10,11 @@ target_link_libraries(l4_optimize hardware_spi hardware_dma)
 
 es201_app(l4_joybox joybox.c st7796.c)                   # L2+L4: joystick drives a box
 target_link_libraries(l4_joybox hardware_spi hardware_dma hardware_adc)
+foreach(opt DEADZONE FULL_DEFLECTION CAL_SAMPLES)        # sweepable from the build cmd
+    if(DEFINED ${opt})
+        target_compile_definitions(l4_joybox PRIVATE ${opt}=${${opt}})
+    endif()
+endforeach()
 
 es201_app(l4_touchbox touchbox.c st7796.c gt911.c)       # touch-drag box + buttons recolour
 target_link_libraries(l4_touchbox hardware_spi hardware_dma hardware_i2c)

@@ -2,6 +2,10 @@
 build/
 **/build/
 
+# Captured serial logs and generated plots (regenerate from the board)
+*.log
+*.png
+
 # Editor / OS noise
 .vscode/
 *.swp
